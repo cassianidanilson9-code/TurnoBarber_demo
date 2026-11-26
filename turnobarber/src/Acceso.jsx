@@ -1,5 +1,5 @@
 import { useState } from "react";
-import BotonTema from "./BotonTema.jsx";
+import BotonTema from "./TemaBoton.jsx";
 
 const CODIGO = "BARBER2026";
 
