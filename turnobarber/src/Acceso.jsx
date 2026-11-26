@@ -2,6 +2,15 @@ import { useState } from "react";
 
 const CODIGO = "BARBER2026";
 
+const franja = {
+  position: "fixed",
+  left: 0,
+  width: "100%",
+  height: 10,
+  backgroundImage:
+    "repeating-linear-gradient(-45deg, #c8102e 0 12px, #ffffff 12px 24px, #1d3a8a 24px 36px, #ffffff 36px 48px)",
+};
+
 export default function Acceso({ children }) {
   const [autorizado, setAutorizado] = useState(
     sessionStorage.getItem("acceso") === "ok"
@@ -22,19 +31,34 @@ export default function Acceso({ children }) {
   if (autorizado) return children;
 
   return (
-    <main style={{ maxWidth: 360, margin: "20vh auto", padding: 16, textAlign: "center" }}>
-      <h1>ACCESO</h1>
-      <form onSubmit={entrar}>
-        <input
-          type="password"
-          placeholder="Ingrese su código de acceso"
-          value={valor}
-          onChange={(e) => setValor(e.target.value)}
-          style={{ width: "100%", padding: 10, marginBottom: 8 }}
+    <>
+      <div style={{ ...franja, top: 0 }} />
+      <div style={{ ...franja, bottom: 0 }} />
+
+      <main style={{ maxWidth: 360, margin: "8vh auto", padding: 16, textAlign: "center" }}>
+        <img
+          src="/logo.png"
+          alt="Logo barbería"
+          style={{
+            width: 170,
+            height: 170,
+            objectFit: "contain",
+            marginBottom: 8,
+          }}
         />
-        <button type="submit" style={{ width: "100%", padding: 10 }}>ACCEDER</button>
-      </form>
-      {error && <p style={{ color: "crimson" }}>Código incorrecto</p>}
-    </main>
+        <h1>ACCESO</h1>
+        <form onSubmit={entrar}>
+          <input
+            type="password"
+            placeholder="Ingrese su código de acceso"
+            value={valor}
+            onChange={(e) => setValor(e.target.value)}
+            style={{ width: "100%", padding: 10, marginBottom: 8 }}
+          />
+          <button type="submit" style={{ width: "100%", padding: 10 }}>ACCEDER</button>
+        </form>
+        {error && <p style={{ color: "crimson" }}>Código incorrecto</p>}
+      </main>
+    </>
   );
 }
