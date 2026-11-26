@@ -132,7 +132,7 @@ export default function App() {
       <main>
         <header className="encabezado">
           <img src="/logo.png" alt="Logo barbería" className="logo-header logo-claro" />
-          <img src="/logo_dark.png" alt="Logo barbería" className="logo-header logo-oscuro" />
+          <img src="/logo_dark.jpg" alt="Logo barbería" className="logo-header logo-oscuro" />
           <div>
             <h1>TurnoBarber</h1>
             <p className="sub">Reserva tu corte sin esperar en fila.</p>
