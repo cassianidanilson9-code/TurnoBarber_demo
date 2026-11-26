@@ -10,3 +10,4 @@ El proyecto corre en AWS Academy Learner Lab con un saldo limitado de USD 50.
 - HTTPS con certificado.
 - Auto Scaling con más de un servidor.
 - Validar el código de acceso en el servidor.
+- .
