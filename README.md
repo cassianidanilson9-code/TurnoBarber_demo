@@ -3,8 +3,8 @@
 Aplicación web para reservar turnos en barberías sin hacer fila. Hay tres tipos de usuario: cliente, barbero y dueño.
 
 - **App en línea:** http://app.turnobarber.me (código de acceso: `BARBER2026`)
-- **Curso:** [NOMBRE DE LA ASIGNATURA] | Docente: Kelly Villa
-- **Integrantes:** [Danilson Cassiani], [Compañero 2], [Compañero 3]
+- **Curso:** BUENAS PRACTICAS DE DESARROLLO DE SOFTWARE | Docente: Kelly Villa
+- **Integrantes:** [Danilson Cassiani], [Jairo Perez], [Cristian Gonzales]
 
 ## Funciones
 - Pantalla de acceso con código antes de entrar a la app.
