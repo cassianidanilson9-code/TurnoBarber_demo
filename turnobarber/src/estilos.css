@@ -25,3 +25,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline:3px so
 .encabezado .sub { margin:0; }
 .logo-header { width:96px; height:96px; object-fit:contain; flex-shrink:0; }
 @media (max-width:480px) { .logo-header { width:72px; height:72px; } }
+nav button { transition: background .2s, color .2s; }
+nav button:hover { background:var(--tinta); color:#fff; }
+.horas button { transition: background .2s, color .2s; }
+.horas button:hover { background:var(--azul); color:#fff; }
+.horas button.ocupada:hover { background:var(--borde); color:var(--tinta); }
