@@ -1,4 +1,5 @@
 import { useState } from "react";
+import BotonTema from "./BotonTema.jsx";
 
 const CODIGO = "BARBER2026";
 
@@ -8,7 +9,7 @@ const franja = {
   width: "100%",
   height: 10,
   backgroundImage:
-    "repeating-linear-gradient(-45deg, #c8102e 0 12px, #ffffff 12px 24px, #1d3a8a 24px 36px, #ffffff 36px 48px)",
+    "repeating-linear-gradient(135deg, #C8102E 0 14px, #fff 14px 28px, #1D4E89 28px 42px, #fff 42px 56px)",
 };
 
 export default function Acceso({ children }) {
@@ -28,24 +29,26 @@ export default function Acceso({ children }) {
     }
   }
 
-  if (autorizado) return children;
+  if (autorizado) {
+    return (
+      <>
+        {children}
+        <BotonTema />
+      </>
+    );
+  }
 
   return (
     <>
       <div style={{ ...franja, top: 0 }} />
       <div style={{ ...franja, bottom: 0 }} />
+      <BotonTema />
 
       <main style={{ maxWidth: 360, margin: "8vh auto", padding: 16, textAlign: "center" }}>
-        <img
-          src="/logo.png"
-          alt="Logo barbería"
-          style={{
-            width: 170,
-            height: 170,
-            objectFit: "contain",
-            marginBottom: 8,
-          }}
-        />
+        <img src="/logo.png" alt="Logo barbería" className="logo-claro"
+          style={{ width: 170, height: 170, objectFit: "contain", marginBottom: 8 }} />
+        <img src="/logo_dark.png" alt="Logo barbería" className="logo-oscuro"
+          style={{ width: 170, height: 170, objectFit: "contain", marginBottom: 8 }} />
         <h1>ACCESO</h1>
         <form onSubmit={entrar}>
           <input
