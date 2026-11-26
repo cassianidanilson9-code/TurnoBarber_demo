@@ -130,8 +130,13 @@ export default function App() {
       <div className="poste" />
       <div className="poste poste-abajo" />
       <main>
-        <h1>TurnoBarber</h1>
-        <p className="sub">Reserva tu corte sin esperar en fila.</p>
+        <header className="encabezado">
+          <img src="/logo.png" alt="Logo barbería" className="logo-header" />
+          <div>
+            <h1>TurnoBarber</h1>
+            <p className="sub">Reserva tu corte sin esperar en fila.</p>
+          </div>
+        </header>
         <nav>
           {tabs.map(([k, t]) => <button key={k} className={vista === k ? "activo" : ""} onClick={() => setVista(k)}>{t}</button>)}
         </nav>
