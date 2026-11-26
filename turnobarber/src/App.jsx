@@ -119,9 +119,16 @@ function Agenda() {
 export default function App() {
   const [vista, setVista] = useState("reservar");
   const tabs = [["reservar", "Reservar"], ["cancelar", "Cancelar"], ["agenda", "Agenda del barbero"]];
+
+  const cerrarSesion = () => {
+    sessionStorage.removeItem("acceso");
+    window.location.reload();
+  };
+
   return (
     <>
       <div className="poste" />
+      <div className="poste poste-abajo" />
       <main>
         <h1>TurnoBarber</h1>
         <p className="sub">Reserva tu corte sin esperar en fila.</p>
@@ -132,6 +139,7 @@ export default function App() {
         {vista === "cancelar" && <Cancelar />}
         {vista === "agenda" && <Agenda />}
       </main>
+      <button type="button" className="cerrar" onClick={cerrarSesion}>Cerrar sesión</button>
     </>
   );
 }

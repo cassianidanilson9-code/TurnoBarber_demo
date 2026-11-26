@@ -17,3 +17,6 @@ input, select { width:100%; padding:10px; border:1px solid var(--borde); border-
 .msg { margin-top:16px; padding:12px; background:var(--gris); border-left:4px solid var(--azul); border-radius:4px; }
 .cita { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--borde); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--azul); outline-offset:2px; }
+.poste-abajo { position:fixed; left:0; bottom:0; width:100%; }
+.cerrar { position:fixed; left:16px; bottom:24px; padding:10px 16px; border:2px solid var(--tinta); background:#fff; color:var(--tinta); font-weight:600; border-radius:6px; cursor:pointer; z-index:10; }
+.cerrar:hover { background:var(--tinta); color:#fff; }
