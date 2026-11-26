@@ -47,7 +47,7 @@ export default function Acceso({ children }) {
       <main style={{ maxWidth: 360, margin: "8vh auto", padding: 16, textAlign: "center" }}>
         <img src="/logo.png" alt="Logo barbería" className="logo-claro"
           style={{ width: 170, height: 170, objectFit: "contain", marginBottom: 8 }} />
-        <img src="/logo_dark.jpg" alt="Logo barbería" className="logo-oscuro"
+        <img src="/logo_dark.png" alt="Logo barbería" className="logo-oscuro"
           style={{ width: 170, height: 170, objectFit: "contain", marginBottom: 8 }} />
         <h1>ACCESO</h1>
         <form onSubmit={entrar}>
