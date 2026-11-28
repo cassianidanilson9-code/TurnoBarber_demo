@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, post } from "./api.js";
 import Horarios from "./Horarios.jsx";
+import Resenas from "./Resenas.jsx";
 const calendario = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Bogota" });
 const hoy = () => calendario.format(new Date());
 const NOMBRE_STORAGE_KEY = "turnobarber.nombre";
@@ -283,6 +284,7 @@ export default function App() {
     ["cancelar", "Cancelar"],
     ["agenda", "Agenda"],
     ["horarios", "Horarios"],
+    ["resenas", "Reseñas"],
   ];
 
   const cerrarSesion = () => {
@@ -310,6 +312,7 @@ export default function App() {
         {vista === "cancelar" && <Cancelar />}
         {vista === "agenda" && <Agenda barberos={barberos} />}
         {vista === "horarios" && <Horarios barberos={barberos} />}
+        {vista === "resenas" && <Resenas />}
       </main>
       <button type="button" className="cerrar" onClick={cerrarSesion}>Cerrar sesión</button>
     </>

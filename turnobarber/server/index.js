@@ -374,6 +374,50 @@ app.get("/api/fidelidad", wrap(async (req, res) => {
   res.json(cuenta || { puntos: 0, recompensas_disponibles: 0 });
 }));
 
+app.get("/api/resenas", wrap(async (_, res) => {
+  res.json(await q(
+    `SELECT r.id, split_part(c.cliente, ' ', 1) AS cliente,
+            r.calificacion, r.comentario, s.nombre AS servicio,
+            b.nombre AS barbero, r.creada_en
+     FROM resenas r
+     JOIN citas c ON c.id=r.cita_id
+     JOIN servicios s ON s.id=c.servicio_id
+     JOIN barberos b ON b.id=c.barbero_id
+     ORDER BY r.creada_en DESC, r.id DESC`
+  ));
+}));
+
+app.post("/api/resenas", wrap(async (req, res) => {
+  const resena = validarResena(req.body);
+  if (!resena) {
+    return res.status(400).json({ error: "Revisa el código, el correo y la calificación." });
+  }
+  const { cita_id, email, calificacion, comentario } = resena;
+
+  const [cita] = await q(
+    "SELECT id FROM citas WHERE id=$1 AND lower(email)=lower($2) AND estado='completada'",
+    [cita_id, email.trim()]
+  );
+  if (!cita) {
+    return res.status(404).json({ error: "No encontramos una cita realizada con esos datos." });
+  }
+
+  try {
+    const [resena] = await q(
+      `INSERT INTO resenas (cita_id, calificacion, comentario)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [cita_id, calificacion, comentario]
+    );
+    res.status(201).json({ id: resena.id });
+  } catch (e) {
+    if (e.code === "23505") {
+      return res.status(409).json({ error: "Esa cita ya tiene una reseña." });
+    }
+    throw e;
+  }
+}));
+
 app.get("/api/agenda", wrap(async (req, res) => {
   const { barbero, fecha } = req.query;
   res.json(await q(
@@ -384,6 +428,19 @@ app.get("/api/agenda", wrap(async (req, res) => {
      WHERE c.barbero_id=$1 AND c.inicio::date=$2 AND c.estado IN ('activa', 'completada')
      ORDER BY c.inicio`, [barbero, fecha]));
 }));
+
+async function completarCitas() {
+  await q(
+    `UPDATE citas
+     SET estado='completada'
+     WHERE estado='activa'
+       AND inicio + duracion_min * INTERVAL '1 minute'
+           <= (now() AT TIME ZONE 'America/Bogota')`
+  );
+}
+
+completarCitas().catch(console.error);
+setInterval(() => completarCitas().catch(console.error), 60000);
 
 // Recordatorios: cada minuto busca citas de las próximas 24 horas que aún no se han avisado
 async function recordatorios() {

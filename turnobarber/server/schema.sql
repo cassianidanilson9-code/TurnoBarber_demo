@@ -79,6 +79,13 @@ ON CONFLICT (email) DO UPDATE SET
   nombre=EXCLUDED.nombre,
   puntos=EXCLUDED.puntos,
   recompensas_disponibles=EXCLUDED.recompensas_disponibles;
+CREATE TABLE IF NOT EXISTS resenas (
+  id SERIAL PRIMARY KEY,
+  cita_id INT NOT NULL UNIQUE REFERENCES citas(id) ON DELETE CASCADE,
+  calificacion INT NOT NULL CHECK (calificacion BETWEEN 1 AND 5),
+  comentario TEXT NOT NULL DEFAULT '' CHECK (length(comentario) <= 1000),
+  creada_en TIMESTAMP NOT NULL DEFAULT now()
+);
 INSERT INTO servicios (nombre, precio, duracion_min)
 SELECT * FROM (VALUES ('Corte', 20000, 30), ('Barba', 12000, 20), ('Corte y barba', 30000, 45)) v
   WHERE NOT EXISTS (SELECT 1 FROM servicios);
