@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
-
-const api = async (url, opts) => {
-  const r = await fetch(url, { headers: { "Content-Type": "application/json" }, ...opts });
-  const d = await r.json().catch(() => ({}));
-  if (!r.ok) throw new Error(d.error || "Algo salió mal");
-  return d;
-};
+import { api, post } from "./api.js";
+import Horarios from "./Horarios.jsx";
 const calendario = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Bogota" });
 const hoy = () => calendario.format(new Date());
-const post = (url, datos) => api(url, { method: "POST", body: JSON.stringify(datos) });
 const NOMBRE_STORAGE_KEY = "turnobarber.nombre";
 const EMAIL_STORAGE_KEY = "turnobarber.email";
 
@@ -21,8 +15,7 @@ function useCatalogo() {
   return { servicios, barberos };
 }
 
-function Reservar() {
-  const { servicios, barberos } = useCatalogo();
+function Reservar({ servicios, barberos }) {
   const [f, setF] = useState(() => ({
     nombre: localStorage.getItem(NOMBRE_STORAGE_KEY) || "",
     email: localStorage.getItem(EMAIL_STORAGE_KEY) || "",
@@ -139,7 +132,6 @@ function Reservar() {
       </p>
       {consulta && !resultado && <p className="sub" role="status">Consultando disponibilidad...</p>}
       {resultado?.error && <p className="sub" role="alert">{resultado.error}</p>}
-
       {resultado && !resultado.error && resultado.horas.length === 0 && (
         <p className="sub">No hay horas disponibles para la fecha seleccionada.</p>
       )}
@@ -191,8 +183,7 @@ function Cancelar() {
   );
 }
 
-function Agenda() {
-  const { barberos } = useCatalogo();
+function Agenda({ barberos }) {
   const [barbero, setBarbero] = useState("");
   const [fecha, setFecha] = useState(hoy());
   const [citas, setCitas] = useState([]);
@@ -226,7 +217,13 @@ function Agenda() {
 
 export default function App() {
   const [vista, setVista] = useState("reservar");
-  const tabs = [["reservar", "Reservar"], ["cancelar", "Cancelar"], ["agenda", "Agenda del barbero"]];
+  const { servicios, barberos } = useCatalogo();
+  const tabs = [
+    ["reservar", "Reservar"],
+    ["cancelar", "Cancelar"],
+    ["agenda", "Agenda"],
+    ["horarios", "Horarios"],
+  ];
 
   const cerrarSesion = () => {
     sessionStorage.removeItem("acceso");
@@ -249,9 +246,10 @@ export default function App() {
         <nav>
           {tabs.map(([k, t]) => <button key={k} className={vista === k ? "activo" : ""} onClick={() => setVista(k)}>{t}</button>)}
         </nav>
-        {vista === "reservar" && <Reservar />}
+        {vista === "reservar" && <Reservar servicios={servicios} barberos={barberos} />}
         {vista === "cancelar" && <Cancelar />}
-        {vista === "agenda" && <Agenda />}
+        {vista === "agenda" && <Agenda barberos={barberos} />}
+        {vista === "horarios" && <Horarios barberos={barberos} />}
       </main>
       <button type="button" className="cerrar" onClick={cerrarSesion}>Cerrar sesión</button>
     </>

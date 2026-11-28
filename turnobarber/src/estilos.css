@@ -19,12 +19,12 @@ h1 { margin:0 0 4px; font-size:2rem; }
 [data-tema="dark"] .logo-claro { display:none; }
 [data-tema="dark"] .logo-oscuro { display:inline; }
 
-nav { display:flex; gap:8px; margin-bottom:20px; }
-nav button { flex:1; padding:10px; border:2px solid var(--tinta); background:var(--fondo); color:var(--tinta); font-weight:600; border-radius:6px; cursor:pointer; transition: background .2s, color .2s; }
+nav { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:20px; }
+nav button { flex:1 1 30%; min-width:100px; padding:10px; border:2px solid var(--tinta); background:var(--fondo); color:var(--tinta); font-weight:600; border-radius:6px; cursor:pointer; transition: background .2s, color .2s; }
 nav button.activo, nav button:hover { background:var(--tinta); color:var(--texto-inv); }
 
 label { display:block; margin:12px 0 4px; font-weight:600; }
-input, select { width:100%; padding:10px; border:1px solid var(--borde); border-radius:6px; font-size:1rem; background:var(--fondo); color:var(--tinta); }
+input, select, textarea { width:100%; padding:10px; border:1px solid var(--borde); border-radius:6px; font-size:1rem; background:var(--fondo); color:var(--tinta); }
 
 .horas { display:grid; grid-template-columns:repeat(auto-fill,minmax(88px,1fr)); gap:8px; margin-top:12px; }
 .horas button { padding:10px 4px; border-radius:6px; border:2px solid var(--azul); background:var(--fondo); color:var(--azul); font-weight:600; cursor:pointer; transition: background .2s, color .2s; }
@@ -36,11 +36,23 @@ input, select { width:100%; padding:10px; border:1px solid var(--borde); border-
 
 .boton { margin-top:16px; padding:12px 18px; background:var(--rojo); color:#fff; border:0; border-radius:6px; font-weight:700; cursor:pointer; }
 .msg { margin-top:16px; padding:12px; background:var(--gris); border-left:4px solid var(--azul); border-radius:4px; }
-.cita { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid var(--borde); }
+.cita { display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; padding:10px 0; border-bottom:1px solid var(--borde); }
+.fidelidad { display:flex; flex-wrap:wrap; gap:8px 16px; margin:12px 0; padding:12px; background:var(--gris); border-radius:6px; }
+.check-horario { display:flex; align-items:center; gap:8px; }
+.check-horario input { width:auto; margin:0; }
+.horarios-editor { display:grid; gap:12px; margin-top:16px; }
+.horario-dia { min-width:0; padding:12px; border:1px solid var(--borde); border-radius:6px; }
+.horario-dia legend { padding:0 6px; font-weight:700; }
+.horario-campos { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; }
+.horario-campos label { margin:8px 0 0; }
+.lista-resenas { display:grid; gap:12px; }
+.resena { padding:12px; background:var(--gris); border-radius:6px; }
+.resena-cabecera { display:flex; justify-content:space-between; gap:12px; }
+.resena .sub { margin:4px 0 0; }
 
 .cerrar, .tema { position:fixed; bottom:24px; padding:10px 16px; border:2px solid var(--tinta); background:var(--fondo); color:var(--tinta); font-weight:600; border-radius:6px; cursor:pointer; z-index:10; transition: background .2s, color .2s; }
 .cerrar { left:16px; }
 .tema { right:16px; }
 .cerrar:hover, .tema:hover { background:var(--tinta); color:var(--texto-inv); }
 
-button:focus-visible, input:focus-visible, select:focus-visible { outline:3px solid var(--azul); outline-offset:2px; }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline:3px solid var(--azul); outline-offset:2px; }

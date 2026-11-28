@@ -1,6 +1,28 @@
 CREATE TABLE IF NOT EXISTS servicios (id SERIAL PRIMARY KEY, nombre TEXT NOT NULL, precio INT NOT NULL, duracion_min INT NOT NULL DEFAULT 30);
 ALTER TABLE servicios ADD COLUMN IF NOT EXISTS duracion_min INT NOT NULL DEFAULT 30;
 CREATE TABLE IF NOT EXISTS barberos  (id SERIAL PRIMARY KEY, nombre TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS horarios_barbero (
+  barbero_id INT NOT NULL REFERENCES barberos(id) ON DELETE CASCADE,
+  dia_semana SMALLINT NOT NULL CHECK (dia_semana BETWEEN 0 AND 6),
+  abre TIME,
+  cierra TIME,
+  descanso_inicio TIME,
+  descanso_fin TIME,
+  PRIMARY KEY (barbero_id, dia_semana),
+  CHECK (
+    (abre IS NULL AND cierra IS NULL AND descanso_inicio IS NULL AND descanso_fin IS NULL)
+    OR (abre IS NOT NULL AND cierra IS NOT NULL AND abre < cierra)
+  ),
+  CHECK (
+    (descanso_inicio IS NULL AND descanso_fin IS NULL)
+    OR (
+      descanso_inicio IS NOT NULL AND descanso_fin IS NOT NULL
+      AND abre IS NOT NULL AND cierra IS NOT NULL
+      AND descanso_inicio >= abre AND descanso_fin <= cierra
+      AND descanso_inicio < descanso_fin
+    )
+  )
+);
 CREATE TABLE IF NOT EXISTS citas (
   id SERIAL PRIMARY KEY,
   cliente TEXT NOT NULL,
@@ -44,6 +66,10 @@ SET duracion_min = CASE nombre
   ELSE duracion_min
 END
 WHERE nombre IN ('Corte', 'Barba', 'Corte y barba');
+INSERT INTO horarios_barbero (barbero_id, dia_semana, abre, cierra)
+SELECT b.id, d.dia, TIME '09:00', TIME '18:00'
+FROM barberos b CROSS JOIN generate_series(0, 6) AS d(dia)
+ON CONFLICT (barbero_id, dia_semana) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION horarios_disponibles(
   p_barbero INT,
@@ -54,22 +80,38 @@ RETURNS TABLE(inicio TIMESTAMP, libre BOOLEAN)
 LANGUAGE SQL
 STABLE
 AS $$
+  WITH horarios AS (
+    SELECT abre, cierra, descanso_inicio, descanso_fin
+    FROM horarios_barbero
+    WHERE barbero_id = p_barbero
+      AND dia_semana = EXTRACT(DOW FROM p_fecha)::INT
+      AND abre IS NOT NULL
+      AND cierra IS NOT NULL
+  ),
+  turnos AS (
+    SELECT slot.inicio, h.descanso_inicio, h.descanso_fin
+    FROM horarios h
+    CROSS JOIN LATERAL generate_series(
+      p_fecha + h.abre,
+      p_fecha + h.cierra - p_duracion * INTERVAL '1 minute',
+      INTERVAL '30 minutes'
+    ) AS slot(inicio)
+    WHERE h.descanso_inicio IS NULL
+       OR slot.inicio >= p_fecha + h.descanso_fin
+       OR slot.inicio + p_duracion * INTERVAL '1 minute' <= p_fecha + h.descanso_inicio
+  )
   SELECT
-    slot.inicio,
+    turnos.inicio,
     NOT EXISTS (
       SELECT 1
       FROM citas c
       JOIN servicios s ON s.id = c.servicio_id
       WHERE c.barbero_id = p_barbero
         AND c.estado = 'activa'
-        AND c.inicio < slot.inicio + p_duracion * INTERVAL '1 minute'
-        AND c.inicio + COALESCE(c.duracion_min, s.duracion_min, 30) * INTERVAL '1 minute' > slot.inicio
+        AND c.inicio < turnos.inicio + p_duracion * INTERVAL '1 minute'
+        AND c.inicio + COALESCE(c.duracion_min, s.duracion_min, 30) * INTERVAL '1 minute' > turnos.inicio
     ) AS libre
-  FROM generate_series(
-    p_fecha + TIME '09:00',
-    p_fecha + TIME '18:00' - p_duracion * INTERVAL '1 minute',
-    INTERVAL '30 minutes'
-  ) AS slot(inicio)
-  ORDER BY slot.inicio;
+  FROM turnos
+  ORDER BY turnos.inicio;
 $$;
   
