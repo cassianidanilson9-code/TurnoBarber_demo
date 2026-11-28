@@ -2,6 +2,13 @@ const express = require("express");
 const path = require("path");
 const { Pool } = require("pg");
 const nodemailer = require("nodemailer");
+const {
+  agregarPunto,
+  emailValido,
+  idValido,
+  validarHorarios,
+  validarResena,
+} = require("./domain");
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -29,60 +36,411 @@ app.get("/api/salud", (_, res) => res.send("ok"));
 app.get("/api/servicios", wrap(async (_, res) => res.json(await q("SELECT * FROM servicios ORDER BY id"))));
 app.get("/api/barberos", wrap(async (_, res) => res.json(await q("SELECT * FROM barberos ORDER BY id"))));
 
+const fechaVAlida = (fecha) => {
+  if (typeof fecha !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false;
+  const dia = new Date(`${fecha}T00:00:00.000Z`);
+  return Number.isFinite(dia.getTime()) && dia.toISOString().slice(0, 10) === fecha;
+};
+const horaValida = (hora) => typeof hora === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(hora);
+
+app.get("/api/horarios", wrap(async (req, res) => {
+  const { barbero } = req.query;
+  if (!idValido(barbero)) return res.status(400).json({ error: "Selecciona un barbero válido." });
+  const [existe] = await q("SELECT id FROM barberos WHERE id=$1", [barbero]);
+  if (!existe) return res.status(404).json({ error: "El barbero seleccionado no existe." });
+  const horarios = await q(
+    `SELECT dia_semana, abre IS NOT NULL AS abierto,
+            to_char(abre, 'HH24:MI') AS abre,
+            to_char(cierra, 'HH24:MI') AS cierra,
+            to_char(descanso_inicio, 'HH24:MI') AS descanso_inicio,
+            to_char(descanso_fin, 'HH24:MI') AS descanso_fin
+     FROM horarios_barbero WHERE barbero_id=$1 ORDER BY dia_semana`,
+    [barbero]
+  );
+  res.json(horarios);
+}));
+
+app.put("/api/barberos/:id/horarios", wrap(async (req, res) => {
+  const { id } = req.params;
+  const horarios = validarHorarios(req.body && req.body.horarios);
+  if (!idValido(id) || !horarios) {
+    return res.status(400).json({ error: "Revisa los siete horarios y descansos del barbero." });
+  }
+
+  const client = await pool.connect();
+  let transactionOpen = false;
+  try {
+    await client.query("BEGIN");
+    transactionOpen = true;
+    const barberResult = await client.query(
+      "SELECT id FROM barberos WHERE id=$1 FOR UPDATE",
+      [id]
+    );
+    if (barberResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return res.status(404).json({ error: "El barbero seleccionado no existe." });
+    }
+
+    for (const horario of horarios) {
+      await client.query(
+        `INSERT INTO horarios_barbero
+           (barbero_id, dia_semana, abre, cierra, descanso_inicio, descanso_fin)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (barbero_id, dia_semana) DO UPDATE SET
+           abre=EXCLUDED.abre,
+           cierra=EXCLUDED.cierra,
+           descanso_inicio=EXCLUDED.descanso_inicio,
+           descanso_fin=EXCLUDED.descanso_fin`,
+        [
+          id,
+          horario.dia_semana,
+          horario.abre,
+          horario.cierra,
+          horario.descanso_inicio,
+          horario.descanso_fin,
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+    transactionOpen = false;
+  } catch (e) {
+    if (transactionOpen) await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+
+  res.json({ ok: true });
+}));
+
 app.get("/api/disponibilidad", wrap(async (req, res) => {
-  const { barbero, fecha } = req.query;
-  const rows = await q(
-    `SELECT to_char(inicio,'HH24:MI') AS hora FROM citas WHERE barbero_id=$1 AND inicio::date=$2 AND estado='activa'`,
-    [barbero, fecha]);
-  const ocupadas = rows.map((r) => r.hora);
-  const horas = [];
-  for (let h = 9; h < 18; h++) for (const m of ["00", "30"]) horas.push(`${String(h).padStart(2, "0")}:${m}`);
-  res.json(horas.map((hora) => ({ hora, libre: !ocupadas.includes(hora) })));
+  const { barbero, fecha, servicio } = req.query;
+  if (!idValido(barbero) || !fechaVAlida(fecha) || (servicio !== undefined && !idValido(servicio))) {
+    return  res.status(400).json({ error: "Revisa el barbero, el servicio y la fecha."});
+  }
+  
+  const [catalogo] = await q(
+    `SELECT b.id, COALESCE(s.duracion_min, 30) AS duracion_min
+     FROM barberos b LEFT JOIN servicios s ON s.id = $2
+     WHERE b.id = $1 AND ($2::int IS NULL OR s.id IS NOT NULL)`, [barbero, servicio ?? null]);
+  if (!catalogo) return res.status(404).json({ error: "Barbero o servicio no disponible." });
+  
+  const horas = await q(
+  `SELECT to_char(inicio, 'HH24:MI') AS hora, libre
+     FROM horarios_disponibles($1, $2, $3) ORDER BY inicio`,
+    [barbero, fecha, catalogo.duracion_min]);
+  res.json(horas);
 }));
 
 app.post("/api/citas", wrap(async (req, res) => {
-  const { nombre, email, servicio_id, barbero_id, fecha, hora } = req.body;
-  if (!nombre || !email || !servicio_id || !barbero_id || !fecha || !hora)
-    return res.status(400).json({ error: "Faltan datos" });
+  const { nombre, email, servicio_id, barbero_id, fecha, hora, usar_recompensa } = req.body;
+  if (
+    typeof nombre !== "string" || !nombre.trim() ||
+    !emailValido(email) ||
+    !idValido(servicio_id) || !idValido(barbero_id) ||
+    !fechaVAlida(fecha) || !horaValida(hora) ||
+    (usar_recompensa !== undefined && typeof usar_recompensa !== "boolean")
+  ) {
+    return res.status(400).json({ error: "Faltan datos o hay datos no válidos." });
+  }
+
+  const client = await pool.connect();
+  let transactionOpen = false;
   try {
-    const [c] = await q(
-      `INSERT INTO citas (cliente, email, servicio_id, barbero_id, inicio) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [nombre, email, servicio_id, barbero_id, `${fecha} ${hora}`]);
-    res.json({ id: c.id });
+    await client.query("BEGIN");
+    transactionOpen = true;
+
+    const barberResult = await client.query(
+      "SELECT id FROM barberos WHERE id = $1 FOR UPDATE",
+      [barbero_id]
+    );
+    if (barberResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return res.status(404).json({ error: "El barbero seleccionado no existe." });
+    }
+
+    const serviceResult = await client.query(
+      "SELECT id, duracion_min FROM servicios WHERE id = $1",
+      [servicio_id]
+    );
+    if (serviceResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return res.status(404).json({ error: "El servicio seleccionado no existe." });
+    }
+
+    const availabilityResult = await client.query(
+      `SELECT libre
+       FROM horarios_disponibles($1, $2, $3)
+       WHERE inicio = ($2::date + $4::time)`,
+      [barbero_id, fecha, serviceResult.rows[0].duracion_min, hora]
+    );
+    if (availabilityResult.rowCount === 0 || !availabilityResult.rows[0].libre) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return res.status(409).json({ error: "Ese horario ya no está disponible. Elige otro." });
+    }
+
+    if (usar_recompensa) {
+      const loyaltyResult = await client.query(
+        "SELECT recompensas_disponibles FROM fidelidad WHERE email=lower($1) FOR UPDATE",
+        [email.trim()]
+      );
+      if (loyaltyResult.rowCount === 0 || loyaltyResult.rows[0].recompensas_disponibles < 1) {
+        await client.query("ROLLBACK");
+        transactionOpen = false;
+        return res.status(409).json({ error: "No tienes un servicio gratis disponible." });
+      }
+
+      await client.query(
+        "UPDATE fidelidad SET recompensas_disponibles=recompensas_disponibles - 1 WHERE email=lower($1)",
+        [email.trim()]
+      );
+    }
+
+    const appointmentResult = await client.query(
+      `INSERT INTO citas
+         (cliente, email, servicio_id, barbero_id, inicio, duracion_min, recompensa_fidelidad)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, to_char(inicio + duracion_min * INTERVAL '1 minute', 'HH24:MI') AS fin`,
+      [
+        nombre.trim(),
+        email.trim(),
+        servicio_id,
+        barbero_id,
+        `${fecha} ${hora}`,
+        serviceResult.rows[0].duracion_min,
+        usar_recompensa === true,
+      ]
+    );
+
+    if (!usar_recompensa) {
+      await client.query(
+        `INSERT INTO fidelidad (email, nombre, puntos, recompensas_disponibles)
+         VALUES (lower($1), $2, 0, 0)
+         ON CONFLICT (email) DO NOTHING`,
+        [email, nombre.trim()]
+      );
+      const [cuenta] = (await client.query(
+        "SELECT puntos, recompensas_disponibles FROM fidelidad WHERE email=lower($1) FOR UPDATE",
+        [email]
+      )).rows;
+      const saldo = agregarPunto(cuenta.puntos, cuenta.recompensas_disponibles);
+      await client.query(
+        `UPDATE fidelidad
+         SET nombre=$2, puntos=$3, recompensas_disponibles=$4
+         WHERE email=lower($1)`,
+        [email, nombre.trim(), saldo.puntos, saldo.recompensas]
+      );
+    }
+
+    await client.query("COMMIT");
+    transactionOpen = false;
+    res.json({
+      id: appointmentResult.rows[0].id,
+      fin: appointmentResult.rows[0].fin,
+      recompensa_fidelidad: usar_recompensa === true,
+    });
   } catch (e) {
+    if (transactionOpen) await client.query("ROLLBACK");
     if (e.code === "23505") return res.status(409).json({ error: "Esa hora ya fue tomada. Elige otra." });
     throw e;
+  } finally {
+    client.release();
   }
 }));
 
 app.delete("/api/citas/:id", wrap(async (req, res) => {
-  const [c] = await q(
-    `UPDATE citas SET estado='cancelada' WHERE id=$1 AND estado='activa' RETURNING barbero_id, inicio`, [req.params.id]);
-  if (!c) return res.status(404).json({ error: "No hay una cita activa con ese número." });
-  // Lista de espera: se avisa al primero que pidió ese mismo horario
-  const [sig] = await q(
-    `DELETE FROM lista_espera WHERE id = (SELECT id FROM lista_espera WHERE barbero_id=$1 AND inicio=$2 ORDER BY id LIMIT 1)
-     RETURNING nombre, email`, [c.barbero_id, c.inicio]);
+  if (!idValido(req.params.id)) return res.status(400).json({ error: "Número de cita no válido." });
+  const [existente] = await q(
+    "SELECT barbero_id FROM citas WHERE id=$1 AND estado='activa'",
+    [req.params.id]
+  );
+  if (!existente) return res.status(404).json({ error: "No hay una cita activa con ese número." });
+
+  const client = await pool.connect();
+  let transactionOpen = false;
+  let c;
+  let sig;
+  try {
+    await client.query("BEGIN");
+    transactionOpen = true;
+    await client.query("SELECT id FROM barberos WHERE id=$1 FOR UPDATE", [existente.barbero_id]);
+
+    const citaResult = await client.query(
+      `UPDATE citas
+       SET estado='cancelada'
+       WHERE id=$1 AND estado='activa'
+       RETURNING barbero_id, inicio, duracion_min, recompensa_fidelidad, email, cliente`,
+      [req.params.id]
+    );
+    [c] = citaResult.rows;
+    if (!c) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return res.status(404).json({ error: "No hay una cita activa con ese número." });
+    }
+
+    if (c.recompensa_fidelidad) {
+      await client.query(
+        `INSERT INTO fidelidad (email, nombre, puntos, recompensas_disponibles)
+         VALUES (lower($1), $2, 0, 1)
+         ON CONFLICT (email) DO UPDATE SET
+           nombre=EXCLUDED.nombre,
+           recompensas_disponibles=fidelidad.recompensas_disponibles + 1`,
+        [c.email, c.cliente]
+      );
+    }
+
+    const esperaResult = await client.query(
+      `DELETE FROM lista_espera
+       WHERE id = (
+         SELECT e.id
+         FROM lista_espera e
+         JOIN servicios s ON s.id = e.servicio_id
+         WHERE e.barbero_id = $1
+           AND e.inicio >= $2
+           AND e.inicio + s.duracion_min * INTERVAL '1 minute'
+               <= $2 + $3 * INTERVAL '1 minute'
+         ORDER BY e.id
+         LIMIT 1
+       )
+       RETURNING nombre, email`,
+      [c.barbero_id, c.inicio, c.duracion_min]
+    );
+    [sig] = esperaResult.rows;
+
+    await client.query("COMMIT");
+    transactionOpen = false;
+  } catch (e) {
+    if (transactionOpen) await client.query("ROLLBACK");
+    throw e;
+  } finally {
+    client.release();
+  }
+
   if (sig) await enviar(sig.email, "Se liberó un horario en TurnoBarber",
-    `Hola ${sig.nombre}, se liberó el horario que querías. Entra a TurnoBarber y resérvalo antes de que lo tome otra persona.`);
+    `Hola ${sig.nombre}, se liberó un horario que permite realizar el servicio que pediste. Entra a TurnoBarber y resérvalo antes de que lo tome otra persona.`);
   res.json({ ok: true, avisado: !!sig });
 }));
 
 app.post("/api/lista-espera", wrap(async (req, res) => {
-  const { nombre, email, barbero_id, fecha, hora } = req.body;
-  if (!nombre || !email || !barbero_id || !fecha || !hora) return res.status(400).json({ error: "Faltan datos" });
-  await q(`INSERT INTO lista_espera (nombre, email, barbero_id, inicio) VALUES ($1,$2,$3,$4)`,
-    [nombre, email, barbero_id, `${fecha} ${hora}`]);
+  const { nombre, email, servicio_id, barbero_id, fecha, hora } = req.body;
+  if (
+    typeof nombre !== "string" || !nombre.trim() ||
+    !emailValido(email) ||
+    !idValido(servicio_id) || !idValido(barbero_id) ||
+    !fechaVAlida(fecha) || !horaValida(hora)
+  ) {
+    return res.status(400).json({ error: "Faltan datos o hay datos no válidos." });
+  }
+
+  const [servicio] = await q("SELECT duracion_min FROM servicios WHERE id=$1", [servicio_id]);
+  if (!servicio) return res.status(404).json({ error: "El servicio seleccionado no existe." });
+  const [barbero] = await q("SELECT id FROM barberos WHERE id=$1", [barbero_id]);
+  if (!barbero) return res.status(404).json({ error: "El barbero seleccionado no existe." });
+
+  const [horario] = await q(
+    `SELECT libre
+     FROM horarios_disponibles($1, $2, $3)
+     WHERE inicio=($2::date + $4::time)`,
+    [barbero_id, fecha, servicio.duracion_min, hora]
+  );
+  if (!horario) {
+    return res.status(409).json({ error: "Ese horario está fuera del horario laboral." });
+  }
+  if (horario.libre) {
+    return res.status(409).json({ error: "Ese horario está libre; puedes reservarlo directamente." });
+  }
+
+  await q(
+    `INSERT INTO lista_espera (nombre, email, barbero_id, servicio_id, inicio)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [nombre.trim(), email.trim(), barbero_id, servicio_id, `${fecha} ${hora}`]
+  );
   res.json({ ok: true });
+}));
+
+app.get("/api/fidelidad", wrap(async (req, res) => {
+  const { email } = req.query;
+  if (!emailValido(email)) return res.status(400).json({ error: "Escribe un correo válido." });
+  const [cuenta] = await q(
+    "SELECT puntos, recompensas_disponibles FROM fidelidad WHERE email=lower($1)",
+    [email.trim()]
+  );
+  res.json(cuenta || { puntos: 0, recompensas_disponibles: 0 });
+}));
+
+app.get("/api/resenas", wrap(async (_, res) => {
+  res.json(await q(
+    `SELECT r.id, split_part(c.cliente, ' ', 1) AS cliente,
+            r.calificacion, r.comentario, s.nombre AS servicio,
+            b.nombre AS barbero, r.creada_en
+     FROM resenas r
+     JOIN citas c ON c.id=r.cita_id
+     JOIN servicios s ON s.id=c.servicio_id
+     JOIN barberos b ON b.id=c.barbero_id
+     ORDER BY r.creada_en DESC, r.id DESC`
+  ));
+}));
+
+app.post("/api/resenas", wrap(async (req, res) => {
+  const resena = validarResena(req.body);
+  if (!resena) {
+    return res.status(400).json({ error: "Revisa el código, el correo y la calificación." });
+  }
+  const { cita_id, email, calificacion, comentario } = resena;
+
+  const [cita] = await q(
+    "SELECT id FROM citas WHERE id=$1 AND lower(email)=lower($2) AND estado='completada'",
+    [cita_id, email.trim()]
+  );
+  if (!cita) {
+    return res.status(404).json({ error: "No encontramos una cita realizada con esos datos." });
+  }
+
+  try {
+    const [resena] = await q(
+      `INSERT INTO resenas (cita_id, calificacion, comentario)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [cita_id, calificacion, comentario]
+    );
+    res.status(201).json({ id: resena.id });
+  } catch (e) {
+    if (e.code === "23505") {
+      return res.status(409).json({ error: "Esa cita ya tiene una reseña." });
+    }
+    throw e;
+  }
 }));
 
 app.get("/api/agenda", wrap(async (req, res) => {
   const { barbero, fecha } = req.query;
   res.json(await q(
-    `SELECT c.id, to_char(c.inicio,'HH24:MI') AS hora, c.cliente, s.nombre AS servicio
+    `SELECT c.id, to_char(c.inicio,'HH24:MI') AS hora,
+            to_char(c.inicio + c.duracion_min * INTERVAL '1 minute', 'HH24:MI') AS fin,
+            c.cliente, s.nombre AS servicio, c.estado, c.recompensa_fidelidad
      FROM citas c JOIN servicios s ON s.id=c.servicio_id
-     WHERE c.barbero_id=$1 AND c.inicio::date=$2 AND c.estado='activa' ORDER BY c.inicio`, [barbero, fecha]));
+     WHERE c.barbero_id=$1 AND c.inicio::date=$2 AND c.estado IN ('activa', 'completada')
+     ORDER BY c.inicio`, [barbero, fecha]));
 }));
+
+async function completarCitas() {
+  await q(
+    `UPDATE citas
+     SET estado='completada'
+     WHERE estado='activa'
+       AND inicio + duracion_min * INTERVAL '1 minute'
+           <= (now() AT TIME ZONE 'America/Bogota')`
+  );
+}
+
+completarCitas().catch(console.error);
+setInterval(() => completarCitas().catch(console.error), 60000);
 
 // Recordatorios: cada minuto busca citas de las próximas 24 horas que aún no se han avisado
 async function recordatorios() {
