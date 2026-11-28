@@ -29,15 +29,31 @@ app.get("/api/salud", (_, res) => res.send("ok"));
 app.get("/api/servicios", wrap(async (_, res) => res.json(await q("SELECT * FROM servicios ORDER BY id"))));
 app.get("/api/barberos", wrap(async (_, res) => res.json(await q("SELECT * FROM barberos ORDER BY id"))));
 
+const idValido = (id) => /^[1-9]\d*$/.test(id) && Number(id) <= 2147483647;
+const fechaVAlida = (fecha) => {
+  if (typeof fecha !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return false;
+  const dia = new Date(`${fecha}T00:00:00.000Z`);
+  return Number.isFinite(dia.getTime()) && dia.toISOString().slice(0, 10) === fecha;
+};
+const horaValida = (hora) => typeof hora === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(hora);
+
 app.get("/api/disponibilidad", wrap(async (req, res) => {
-  const { barbero, fecha } = req.query;
-  const rows = await q(
-    `SELECT to_char(inicio,'HH24:MI') AS hora FROM citas WHERE barbero_id=$1 AND inicio::date=$2 AND estado='activa'`,
-    [barbero, fecha]);
-  const ocupadas = rows.map((r) => r.hora);
-  const horas = [];
-  for (let h = 9; h < 18; h++) for (const m of ["00", "30"]) horas.push(`${String(h).padStart(2, "0")}:${m}`);
-  res.json(horas.map((hora) => ({ hora, libre: !ocupadas.includes(hora) })));
+  const { barbero, fecha, servicio } = req.query;
+  if (!idValido(barbero) || !fechaVAlida(fecha) || (servicio !== undefined && !idValido(servicio))) {
+    return  res.status(400).json({ error: "Revisa el barbero, el servicio y la fecha."});
+  }
+  
+  const [catalogo] = await q(
+    `SELECT b.id, COALESCE(s.duracion_min, 30) AS duracion_min
+     FROM barberos b LEFT JOIN servicios s ON s.id = $2
+     WHERE b.id = $1 AND ($2::int IS NULL OR s.id IS NOT NULL)`, [barbero, servicio ?? null]);
+  if (!catalogo) return res.status(404).json({ error: "Barbero o servicio no disponible." });
+  
+  const horas = await q(
+  `SELECT to_char(inicio, 'HH24:MI') AS hora, libre
+     FROM horarios_disponibles($1, $2, $3) ORDER BY inicio`,
+    [barbero, fecha, catalogo.duracion_min]);
+  res.json(horas);
 }));
 
 app.post("/api/citas", wrap(async (req, res) => {
