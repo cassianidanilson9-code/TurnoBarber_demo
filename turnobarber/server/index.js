@@ -207,7 +207,9 @@ app.post("/api/lista-espera", wrap(async (req, res) => {
 app.get("/api/agenda", wrap(async (req, res) => {
   const { barbero, fecha } = req.query;
   res.json(await q(
-    `SELECT c.id, to_char(c.inicio,'HH24:MI') AS hora, c.cliente, s.nombre AS servicio
+    `SELECT c.id, to_char(c.inicio,'HH24:MI') AS hora,
+            to_char(c.inicio + c.duracion_min * INTERVAL '1 minute', 'HH24:MI') AS fin,
+            c.cliente, s.nombre AS servicio
      FROM citas c JOIN servicios s ON s.id=c.servicio_id
      WHERE c.barbero_id=$1 AND c.inicio::date=$2 AND c.estado='activa' ORDER BY c.inicio`, [barbero, fecha]));
 }));
