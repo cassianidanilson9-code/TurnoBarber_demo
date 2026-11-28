@@ -58,16 +58,68 @@ app.get("/api/disponibilidad", wrap(async (req, res) => {
 
 app.post("/api/citas", wrap(async (req, res) => {
   const { nombre, email, servicio_id, barbero_id, fecha, hora } = req.body;
-  if (!nombre || !email || !servicio_id || !barbero_id || !fecha || !hora)
+  if (
+    typeof nombre !== "string" || !nombre.trim() ||
+    typeof email !== "string" || !email.trim() ||
+    !idValido(servicio_id) || !idValido(barbero_id) ||
+    !fechaVAlida(fecha) || !horaValida(hora)
+  ) {
     return res.status(400).json({ error: "Faltan datos" });
+  }
+
+  const client = await pool.connect();
+  let transactionOpen = false;
   try {
-    const [c] = await q(
-      `INSERT INTO citas (cliente, email, servicio_id, barbero_id, inicio) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [nombre, email, servicio_id, barbero_id, `${fecha} ${hora}`]);
-    res.json({ id: c.id });
+    await client.query("BEGIN");
+    transactionOpen = true;
+
+    const barberResult = await client.query(
+      "SELECT id FROM barberos WHERE id = $1 FOR UPDATE",
+      [barbero_id]
+    );
+    if (barberResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return res.status(404).json({ error: "El barbero seleccionado no existe." });
+    }
+
+    const serviceResult = await client.query(
+      "SELECT id, duracion_min FROM servicios WHERE id = $1",
+      [servicio_id]
+    );
+    if (serviceResult.rowCount === 0) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return res.status(404).json({ error: "El servicio seleccionado no existe." });
+    }
+
+    const availabilityResult = await client.query(
+      `SELECT libre
+       FROM horarios_disponibles($1, $2, $3)
+       WHERE inicio = ($2::date + $4::time)`,
+      [barbero_id, fecha, serviceResult.rows[0].duracion_min, hora]
+    );
+    if (availabilityResult.rowCount === 0 || !availabilityResult.rows[0].libre) {
+      await client.query("ROLLBACK");
+      transactionOpen = false;
+      return res.status(409).json({ error: "Ese horario ya no está disponible. Elige otro." });
+    }
+
+    const appointmentResult = await client.query(
+      `INSERT INTO citas (cliente, email, servicio_id, barbero_id, inicio, duracion_min)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, to_char(inicio + duracion_min * INTERVAL '1 minute', 'HH24:MI') AS fin`,
+      [nombre.trim(), email.trim(), servicio_id, barbero_id, `${fecha} ${hora}`, serviceResult.rows[0].duracion_min]
+    );
+    await client.query("COMMIT");
+    transactionOpen = false;
+    res.json({ id: appointmentResult.rows[0].id, fin: appointmentResult.rows[0].fin });
   } catch (e) {
+    if (transactionOpen) await client.query("ROLLBACK");
     if (e.code === "23505") return res.status(409).json({ error: "Esa hora ya fue tomada. Elige otra." });
     throw e;
+  } finally {
+    client.release();
   }
 }));
 
