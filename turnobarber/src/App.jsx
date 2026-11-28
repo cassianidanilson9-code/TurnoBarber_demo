@@ -28,6 +28,9 @@ function Reservar({ servicios, barberos }) {
   const [guardado, setGuardado] = useState(false);
   const [msg, setMsg] = useState("");
   const [horaSeleccionada, setHoraSeleccionada] = useState("");
+  const [usarRecompensa, setUsarRecompensa] = useState(false);
+  const [cuentaFidelidad, setCuentaFidelidad] = useState(null);
+  const [errorFidelidad, setErrorFidelidad] = useState("");
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
   const servicio_id = f.servicio_id || servicios[0]?.id;
   const barbero_id = f.barbero_id || barberos[0]?.id;
@@ -36,6 +39,32 @@ function Reservar({ servicios, barberos }) {
     localStorage.setItem(NOMBRE_STORAGE_KEY, f.nombre);
     localStorage.setItem(EMAIL_STORAGE_KEY, f.email);
   }, [f.nombre, f.email]);
+
+  useEffect(() => {
+    setCuentaFidelidad(null);
+    setUsarRecompensa(false);
+    setErrorFidelidad("");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(f.email.trim())) {
+      return;
+    }
+
+    let vigente = true;
+    const consultaFidelidad = new URLSearchParams({ email: f.email.trim() }).toString();
+    api(`/api/fidelidad?${consultaFidelidad}`)
+      .then((cuenta) => {
+        if (vigente) {
+          setCuentaFidelidad(cuenta);
+          setErrorFidelidad("");
+        }
+      })
+      .catch((error) => {
+        if (vigente) setErrorFidelidad(error.message);
+      });
+
+    return () => {
+      vigente = false;
+    };
+  }, [f.email, revision]);
 
   const consulta = barbero_id && servicio_id && f.fecha
     ? new URLSearchParams({
@@ -96,8 +125,13 @@ function Reservar({ servicios, barberos }) {
 
     try {
       if (h.libre) {
-        const r = await post("/api/citas", datos);
-        setMsg(`Cita reservada de ${h.hora} a ${r.fin}. Tu número de cita es ${r.id}. Guárdalo por si necesitas cancelar.`);
+        const r = await post("/api/citas", {
+          ...datos,
+          usar_recompensa: usarRecompensa,
+        });
+        const detalleRecompensa = r.recompensa_fidelidad ? " Usaste tu servicio gratis." : "";
+        setMsg(`Cita reservada de ${h.hora} a ${r.fin}. Tu número de cita es ${r.id}. Guárdalo por si necesitas cancelar.${detalleRecompensa}`);
+        setUsarRecompensa(false);
       } else {
         await post("/api/lista-espera", datos);
         setMsg("Quedaste en la lista de espera. Te avisamos por correo si se libera ese horario.");
@@ -132,6 +166,31 @@ function Reservar({ servicios, barberos }) {
       </p>
       {consulta && !resultado && <p className="sub" role="status">Consultando disponibilidad...</p>}
       {resultado?.error && <p className="sub" role="alert">{resultado.error}</p>}
+      {errorFidelidad && <p className="sub" role="alert">{errorFidelidad}</p>}
+
+      {cuentaFidelidad && (
+        <div className="fidelidad">
+          <strong>Fidelidad</strong>
+          <span>{cuentaFidelidad.puntos} de 10 puntos</span>
+          <span>{cuentaFidelidad.recompensas_disponibles} servicios gratis disponibles</span>
+        </div>
+      )}
+      {cuentaFidelidad && (
+        <p className="sub">Cada reserva confirmada suma un punto. Las recompensas aparecen al llegar a diez.</p>
+      )}
+
+      {cuentaFidelidad?.recompensas_disponibles > 0 && (
+        <label className="check-horario">
+          <input
+            type="checkbox"
+            checked={usarRecompensa}
+            onChange={(e) => setUsarRecompensa(e.target.checked)}
+            disabled={guardado}
+          />
+          Usar un servicio gratis en esta reserva
+        </label>
+      )}
+
       {resultado && !resultado.error && resultado.horas.length === 0 && (
         <p className="sub">No hay horas disponibles para la fecha seleccionada.</p>
       )}
@@ -207,7 +266,8 @@ function Agenda({ barberos }) {
         {citas.map((c) => (
           <div className="cita" key={c.id}>
             <strong>{c.hora}-{c.fin}</strong>
-            <span>{c.cliente} - {c.servicio}</span>
+            <span>{c.cliente} - {c.servicio}{c.recompensa_fidelidad ? " · Servicio gratis" : ""}</span>
+            <span>{c.estado === "completada" ? "Realizada" : "Pendiente"}</span>
           </div>
         ))}
       </div>

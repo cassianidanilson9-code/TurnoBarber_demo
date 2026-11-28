@@ -32,8 +32,10 @@ CREATE TABLE IF NOT EXISTS citas (
   inicio TIMESTAMP NOT NULL,
   duracion_min INT NOT NULL DEFAULT 30,
   estado TEXT NOT NULL DEFAULT 'activa',
-  recordado BOOLEAN NOT NULL DEFAULT false
+  recordado BOOLEAN NOT NULL DEFAULT false,
+  recompensa_fidelidad BOOLEAN NOT NULL DEFAULT false
 );
+ALTER TABLE citas ADD COLUMN IF NOT EXISTS recompensa_fidelidad BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE citas ADD COLUMN IF NOT EXISTS duracion_min INT;
 UPDATE citas c
 SET duracion_min = COALESCE(s.duracion_min, 30)
@@ -53,6 +55,30 @@ CREATE TABLE IF NOT EXISTS lista_espera (
   inicio TIMESTAMP NOT NULL
 );
 ALTER TABLE lista_espera ADD COLUMN IF NOT EXISTS servicio_id INT REFERENCES servicios(id);
+CREATE TABLE IF NOT EXISTS fidelidad (
+  email TEXT PRIMARY KEY,
+  nombre TEXT NOT NULL,
+  puntos INT NOT NULL DEFAULT 0 CHECK (puntos BETWEEN 0 AND 9),
+  recompensas_disponibles INT NOT NULL DEFAULT 0 CHECK (recompensas_disponibles >= 0)
+);
+WITH cuentas AS (
+  SELECT lower(email) AS email,
+         max(cliente) AS nombre,
+         count(*) FILTER (WHERE recompensa_fidelidad = false)::INT AS citas_con_punto,
+         count(*) FILTER (
+           WHERE recompensa_fidelidad = true AND estado <> 'cancelada'
+         )::INT AS recompensas_usadas
+  FROM citas
+  GROUP BY lower(email)
+)
+INSERT INTO fidelidad (email, nombre, puntos, recompensas_disponibles)
+SELECT email, nombre, citas_con_punto % 10,
+       GREATEST(citas_con_punto / 10 - recompensas_usadas, 0)
+FROM cuentas
+ON CONFLICT (email) DO UPDATE SET
+  nombre=EXCLUDED.nombre,
+  puntos=EXCLUDED.puntos,
+  recompensas_disponibles=EXCLUDED.recompensas_disponibles;
 INSERT INTO servicios (nombre, precio, duracion_min)
 SELECT * FROM (VALUES ('Corte', 20000, 30), ('Barba', 12000, 20), ('Corte y barba', 30000, 45)) v
   WHERE NOT EXISTS (SELECT 1 FROM servicios);

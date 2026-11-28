@@ -135,14 +135,15 @@ app.get("/api/disponibilidad", wrap(async (req, res) => {
 }));
 
 app.post("/api/citas", wrap(async (req, res) => {
-  const { nombre, email, servicio_id, barbero_id, fecha, hora } = req.body;
+  const { nombre, email, servicio_id, barbero_id, fecha, hora, usar_recompensa } = req.body;
   if (
     typeof nombre !== "string" || !nombre.trim() ||
-    typeof email !== "string" || !email.trim() ||
+    !emailValido(email) ||
     !idValido(servicio_id) || !idValido(barbero_id) ||
-    !fechaVAlida(fecha) || !horaValida(hora)
+    !fechaVAlida(fecha) || !horaValida(hora) ||
+    (usar_recompensa !== undefined && typeof usar_recompensa !== "boolean")
   ) {
-    return res.status(400).json({ error: "Faltan datos" });
+    return res.status(400).json({ error: "Faltan datos o hay datos no válidos." });
   }
 
   const client = await pool.connect();
@@ -183,15 +184,66 @@ app.post("/api/citas", wrap(async (req, res) => {
       return res.status(409).json({ error: "Ese horario ya no está disponible. Elige otro." });
     }
 
+    if (usar_recompensa) {
+      const loyaltyResult = await client.query(
+        "SELECT recompensas_disponibles FROM fidelidad WHERE email=lower($1) FOR UPDATE",
+        [email.trim()]
+      );
+      if (loyaltyResult.rowCount === 0 || loyaltyResult.rows[0].recompensas_disponibles < 1) {
+        await client.query("ROLLBACK");
+        transactionOpen = false;
+        return res.status(409).json({ error: "No tienes un servicio gratis disponible." });
+      }
+
+      await client.query(
+        "UPDATE fidelidad SET recompensas_disponibles=recompensas_disponibles - 1 WHERE email=lower($1)",
+        [email.trim()]
+      );
+    }
+
     const appointmentResult = await client.query(
-      `INSERT INTO citas (cliente, email, servicio_id, barbero_id, inicio, duracion_min)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO citas
+         (cliente, email, servicio_id, barbero_id, inicio, duracion_min, recompensa_fidelidad)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id, to_char(inicio + duracion_min * INTERVAL '1 minute', 'HH24:MI') AS fin`,
-      [nombre.trim(), email.trim(), servicio_id, barbero_id, `${fecha} ${hora}`, serviceResult.rows[0].duracion_min]
+      [
+        nombre.trim(),
+        email.trim(),
+        servicio_id,
+        barbero_id,
+        `${fecha} ${hora}`,
+        serviceResult.rows[0].duracion_min,
+        usar_recompensa === true,
+      ]
     );
+
+    if (!usar_recompensa) {
+      await client.query(
+        `INSERT INTO fidelidad (email, nombre, puntos, recompensas_disponibles)
+         VALUES (lower($1), $2, 0, 0)
+         ON CONFLICT (email) DO NOTHING`,
+        [email, nombre.trim()]
+      );
+      const [cuenta] = (await client.query(
+        "SELECT puntos, recompensas_disponibles FROM fidelidad WHERE email=lower($1) FOR UPDATE",
+        [email]
+      )).rows;
+      const saldo = agregarPunto(cuenta.puntos, cuenta.recompensas_disponibles);
+      await client.query(
+        `UPDATE fidelidad
+         SET nombre=$2, puntos=$3, recompensas_disponibles=$4
+         WHERE email=lower($1)`,
+        [email, nombre.trim(), saldo.puntos, saldo.recompensas]
+      );
+    }
+
     await client.query("COMMIT");
     transactionOpen = false;
-    res.json({ id: appointmentResult.rows[0].id, fin: appointmentResult.rows[0].fin });
+    res.json({
+      id: appointmentResult.rows[0].id,
+      fin: appointmentResult.rows[0].fin,
+      recompensa_fidelidad: usar_recompensa === true,
+    });
   } catch (e) {
     if (transactionOpen) await client.query("ROLLBACK");
     if (e.code === "23505") return res.status(409).json({ error: "Esa hora ya fue tomada. Elige otra." });
@@ -222,7 +274,7 @@ app.delete("/api/citas/:id", wrap(async (req, res) => {
       `UPDATE citas
        SET estado='cancelada'
        WHERE id=$1 AND estado='activa'
-       RETURNING barbero_id, inicio, duracion_min`,
+       RETURNING barbero_id, inicio, duracion_min, recompensa_fidelidad, email, cliente`,
       [req.params.id]
     );
     [c] = citaResult.rows;
@@ -230,6 +282,17 @@ app.delete("/api/citas/:id", wrap(async (req, res) => {
       await client.query("ROLLBACK");
       transactionOpen = false;
       return res.status(404).json({ error: "No hay una cita activa con ese número." });
+    }
+
+    if (c.recompensa_fidelidad) {
+      await client.query(
+        `INSERT INTO fidelidad (email, nombre, puntos, recompensas_disponibles)
+         VALUES (lower($1), $2, 0, 1)
+         ON CONFLICT (email) DO UPDATE SET
+           nombre=EXCLUDED.nombre,
+           recompensas_disponibles=fidelidad.recompensas_disponibles + 1`,
+        [c.email, c.cliente]
+      );
     }
 
     const esperaResult = await client.query(
@@ -268,7 +331,7 @@ app.post("/api/lista-espera", wrap(async (req, res) => {
   const { nombre, email, servicio_id, barbero_id, fecha, hora } = req.body;
   if (
     typeof nombre !== "string" || !nombre.trim() ||
-    typeof email !== "string" || !email.trim() ||
+    !emailValido(email) ||
     !idValido(servicio_id) || !idValido(barbero_id) ||
     !fechaVAlida(fecha) || !horaValida(hora)
   ) {
@@ -301,14 +364,25 @@ app.post("/api/lista-espera", wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+app.get("/api/fidelidad", wrap(async (req, res) => {
+  const { email } = req.query;
+  if (!emailValido(email)) return res.status(400).json({ error: "Escribe un correo válido." });
+  const [cuenta] = await q(
+    "SELECT puntos, recompensas_disponibles FROM fidelidad WHERE email=lower($1)",
+    [email.trim()]
+  );
+  res.json(cuenta || { puntos: 0, recompensas_disponibles: 0 });
+}));
+
 app.get("/api/agenda", wrap(async (req, res) => {
   const { barbero, fecha } = req.query;
   res.json(await q(
     `SELECT c.id, to_char(c.inicio,'HH24:MI') AS hora,
             to_char(c.inicio + c.duracion_min * INTERVAL '1 minute', 'HH24:MI') AS fin,
-            c.cliente, s.nombre AS servicio
+            c.cliente, s.nombre AS servicio, c.estado, c.recompensa_fidelidad
      FROM citas c JOIN servicios s ON s.id=c.servicio_id
-     WHERE c.barbero_id=$1 AND c.inicio::date=$2 AND c.estado='activa' ORDER BY c.inicio`, [barbero, fecha]));
+     WHERE c.barbero_id=$1 AND c.inicio::date=$2 AND c.estado IN ('activa', 'completada')
+     ORDER BY c.inicio`, [barbero, fecha]));
 }));
 
 // Recordatorios: cada minuto busca citas de las próximas 24 horas que aún no se han avisado
