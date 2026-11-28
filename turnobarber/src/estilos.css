@@ -29,6 +29,8 @@ input, select { width:100%; padding:10px; border:1px solid var(--borde); border-
 .horas { display:grid; grid-template-columns:repeat(auto-fill,minmax(88px,1fr)); gap:8px; margin-top:12px; }
 .horas button { padding:10px 4px; border-radius:6px; border:2px solid var(--azul); background:var(--fondo); color:var(--azul); font-weight:600; cursor:pointer; transition: background .2s, color .2s; }
 .horas button:hover { background:var(--azul); color:var(--texto-inv); }
+.horas button.seleccionada,
+.horas button.seleccionada:hover { background:var(--azul); color:var(--texto-inv); box-shadow:0 0 0 3px rgba(29,78,137,.25); }
 .horas button.ocupada { border-color:var(--borde); background:var(--gris); color:var(--apagado); font-size:.8rem; }
 .horas button.ocupada:hover { background:var(--borde); color:var(--tinta); }
 

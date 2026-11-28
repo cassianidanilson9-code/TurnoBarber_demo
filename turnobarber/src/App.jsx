@@ -6,8 +6,11 @@ const api = async (url, opts) => {
   if (!r.ok) throw new Error(d.error || "Algo salió mal");
   return d;
 };
-const hoy = () => new Date().toISOString().slice(0, 10);
-const post = (url, body) => api(url, { method: "POST", body: JSON.stringify(body) });
+const calendario = new Intl.DateTimeFormat("sv-SE", { timeZone: "America/Bogota" });
+const hoy = () => calendario.format(new Date());
+const post = (url, datos) => api(url, { method: "POST", body: JSON.stringify(datos) });
+const NOMBRE_STORAGE_KEY = "turnobarber.nombre";
+const EMAIL_STORAGE_KEY = "turnobarber.email";
 
 function useCatalogo() {
   const [servicios, setS] = useState([]);
@@ -20,38 +23,109 @@ function useCatalogo() {
 
 function Reservar() {
   const { servicios, barberos } = useCatalogo();
-  const [f, setF] = useState({ nombre: "", email: "", servicio_id: "", barbero_id: "", fecha: hoy() });
-  const [horas, setHoras] = useState([]);
+  const [f, setF] = useState(() => ({
+    nombre: localStorage.getItem(NOMBRE_STORAGE_KEY) || "",
+    email: localStorage.getItem(EMAIL_STORAGE_KEY) || "",
+    servicio_id: "",
+    barbero_id: "",
+    fecha: hoy(),
+  }));
+  const [disponibilidad, setDisponibilidad] = useState(null);
+  const [revision, setRevision] = useState(0);
+  const [guardado, setGuardado] = useState(false);
   const [msg, setMsg] = useState("");
+  const [horaSeleccionada, setHoraSeleccionada] = useState("");
   const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
   const servicio_id = f.servicio_id || servicios[0]?.id;
   const barbero_id = f.barbero_id || barberos[0]?.id;
 
-  const cargar = () => barbero_id && api(`/api/disponibilidad?barbero=${barbero_id}&fecha=${f.fecha}`).then(setHoras);
-  useEffect(() => { cargar(); }, [barbero_id, f.fecha]);
+  useEffect(() => {
+    localStorage.setItem(NOMBRE_STORAGE_KEY, f.nombre);
+    localStorage.setItem(EMAIL_STORAGE_KEY, f.email);
+  }, [f.nombre, f.email]);
+
+  const consulta = barbero_id && servicio_id && f.fecha
+    ? new URLSearchParams({
+        barbero: barbero_id,
+        servicio: servicio_id,
+        fecha: f.fecha,
+      }).toString()
+    : "";
+  const resultado = disponibilidad?.consulta === consulta && disponibilidad.revision === revision
+    ? disponibilidad
+    : null;
+
+  useEffect(() => {
+    if (!consulta) return;
+
+    let vigente = true;
+
+    api(`/api/disponibilidad?${consulta}`)
+      .then((horas) => {
+          if (vigente) {
+            setDisponibilidad({
+              consulta,
+              revision,
+              horas: Array.isArray(horas) ? horas : [],
+            });
+          }
+      })
+      .catch((e) => {
+        if (vigente) {
+          setDisponibilidad({ consulta, revision, horas: [], error: e.message });
+        }
+      });
+
+    return () => {
+      vigente = false;
+    };
+  }, [consulta, revision]);
+
+  useEffect(() => {
+    setHoraSeleccionada("");
+  }, [consulta]);
+
+  const seleccionarHora = (h) => {
+    setHoraSeleccionada((actual) => actual === h.hora ? "" : h.hora);
+    setMsg("");
+  };
+
+  const confirmarReserva = async () => {
+    const hora = resultado?.horas.find((h) => h.hora === horaSeleccionada);
+    if (hora) await elegir(hora);
+  };
 
   const elegir = async (h) => {
-    if (!f.nombre || !f.email) return setMsg("Escribe tu nombre y tu correo primero.");
+    if (!f.nombre || !f.email) return setMsg("Debes indicar tu nombre y correo.");
+
     const datos = { ...f, servicio_id, barbero_id, hora: h.hora };
+    setGuardado(true);
+
     try {
       if (h.libre) {
         const r = await post("/api/citas", datos);
-        setMsg(`Cita reservada para las ${h.hora}. Tu número de cita es ${r.id}. Guárdalo por si necesitas cancelar.`);
+        setMsg(`Cita reservada de ${h.hora} a ${r.fin}. Tu número de cita es ${r.id}. Guárdalo por si necesitas cancelar.`);
       } else {
         await post("/api/lista-espera", datos);
         setMsg("Quedaste en la lista de espera. Te avisamos por correo si se libera ese horario.");
       }
-    } catch (e) { setMsg(e.message); }
-    cargar();
+    } catch (e) {
+      setMsg(e.message);
+    } finally {
+      setGuardado(false);
+      setHoraSeleccionada("");
+      setRevision((x) => x + 1);
+    }
   };
 
   return (
     <section>
       <label>Nombre<input value={f.nombre} onChange={(e) => set("nombre", e.target.value)} /></label>
       <label>Correo<input type="email" value={f.email} onChange={(e) => set("email", e.target.value)} /></label>
+      <p className="sub">Tu nombre y correo se guardan en este navegador para la próxima vez.</p>
       <label>Servicio
         <select value={servicio_id || ""} onChange={(e) => set("servicio_id", e.target.value)}>
-          {servicios.map((s) => <option key={s.id} value={s.id}>{s.nombre} - ${s.precio.toLocaleString("es-CO")}</option>)}
+          {servicios.map((s) => <option key={s.id} value={s.id}>{s.nombre} - ${s.precio.toLocaleString("es-CO")} · {s.duracion_min} min </option>)}
         </select>
       </label>
       <label>Barbero
@@ -60,14 +134,40 @@ function Reservar() {
         </select>
       </label>
       <label>Fecha<input type="date" min={hoy()} value={f.fecha} onChange={(e) => set("fecha", e.target.value)} /></label>
-      <p className="sub" style={{ marginTop: 16 }}>Toca una hora libre para reservar. Si está ocupada, te anotas en la lista de espera.</p>
+      <p className="sub" style={{ marginTop: 16 }}>
+        Selecciona una hora y pulsa confirmar. Puedes cambiarla o desmarcarla antes de confirmar.
+      </p>
+      {consulta && !resultado && <p className="sub" role="status">Consultando disponibilidad...</p>}
+      {resultado?.error && <p className="sub" role="alert">{resultado.error}</p>}
+
+      {resultado && !resultado.error && resultado.horas.length === 0 && (
+        <p className="sub">No hay horas disponibles para la fecha seleccionada.</p>
+      )}
+
       <div className="horas">
-        {horas.map((h) => (
-          <button key={h.hora} className={h.libre ? "" : "ocupada"} onClick={() => elegir(h)}>
-            {h.hora}{!h.libre && <><br />lista de espera</>}
+        {resultado?.horas.map((h) => (
+          <button
+            key={h.hora}
+            className={`${h.libre ? "" : "ocupada"}${horaSeleccionada === h.hora ? " seleccionada" : ""}`}
+            onClick={() => seleccionarHora(h)}
+            aria-pressed={horaSeleccionada === h.hora}
+            disabled={guardado}
+          >
+            {h.hora}
+            {!h.libre && <><br />lista de espera</>}
           </button>
         ))}
       </div>
+      {horaSeleccionada && (
+        <button
+          type="button"
+          className="boton"
+          onClick={confirmarReserva}
+          disabled={guardado}
+        >
+          Confirmar reserva — {horaSeleccionada}
+        </button>
+      )}
       {msg && <div className="msg" role="status">{msg}</div>}
     </section>
   );
@@ -98,6 +198,7 @@ function Agenda() {
   const [citas, setCitas] = useState([]);
   const bid = barbero || barberos[0]?.id;
   useEffect(() => { if (bid) api(`/api/agenda?barbero=${bid}&fecha=${fecha}`).then(setCitas); }, [bid, fecha]);
+
   return (
     <section>
       <label>Barbero
@@ -105,11 +206,18 @@ function Agenda() {
           {barberos.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
         </select>
       </label>
-      <label>Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} /></label>
+      <label>
+        Fecha<input type="date" value={fecha} onChange={(e) => setFecha(e.target.value)} />
+      </label>
+
       <div style={{ marginTop: 16 }}>
         {citas.length === 0 && <p className="sub">No hay citas para este día.</p>}
+
         {citas.map((c) => (
-          <div className="cita" key={c.id}><strong>{c.hora}</strong><span>{c.cliente} - {c.servicio}</span></div>
+          <div className="cita" key={c.id}>
+            <strong>{c.hora}-{c.fin}</strong>
+            <span>{c.cliente} - {c.servicio}</span>
+          </div>
         ))}
       </div>
     </section>
